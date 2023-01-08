@@ -1,0 +1,102 @@
+#https://www.kaggle.com/datasets/gauravduttakiit/employee-performance-prediction?select=train_dataset.csv
+train = read.csv("C:/Users/user/OneDrive/桌面/employee performance/data/train_dataset.csv")
+test = read.csv("C:/Users/user/OneDrive/桌面/employee performance/data/test_dataset.csv")
+library(caret)
+library(randomForest)  # random forests
+library(e1071)  # support vector machines
+library(rpart)
+library(corrplot)
+library(rattle)
+#check missing value
+for(i in 1:length(train[1,])){
+  print(sum(is.na(train[,i])))
+}
+na_rows = is.na(train[,4])
+train[na_rows,4] = 0
+#factor variable
+train[,1] = as.factor(train[,1])
+#敘述統計
+#相關係數檢定
+data.corr = cor(train[,-1])
+corrplot.mixed(data.corr, upper = "square")#關係矩陣
+
+#預處理
+sum(train[,12:16])/length(train[,1])#equals to 1, means will occur DummyVariableRegression
+sum(train[,17:19])/length(train[,1])#equals to 1, means will occur DummyVariableRegression
+sum(train[,20:25])/length(train[,1])#equals to 1, means will occur DummyVariableRegression
+#train=train[,c(-16,-19,-25)]
+#delete high corr
+train=train[,c(-3,-10)]
+#===================boxplot for ALL variables#===================
+boxplot(train[,1:5])
+boxplot(train[,6:7])
+boxplot(train[,8:14])
+boxplot(train[,15:21])
+#Y should bewtwwn 0~1
+train$actual_productivity = train$actual_productivity/max(train$actual_productivity)
+#outlier for Xs 3567
+olr = c(3,5,6,7)
+for(x in olr){
+  qtl = quantile(train[,x], probs=c(.25, .75), na.rm = FALSE)
+  iqr = IQR(train[,x])
+  Lower = qtl[1] - 1.5*iqr
+  Upper = qtl[2] + 1.5*iqr
+  train_new =  subset(train, train[,x] >= Lower & train[,x] <= Upper)
+}
+
+#analysis
+eq=as.formula(actual_productivity~.)
+#1. rpart
+tree = rpart(actual_productivity ~., data = train_new, control = rpart.control(cp = 0.0025))
+dev.new();fancyRpartPlot(tree,
+                         sub="Classification Tree",
+                         type=1,
+                         palettes= c("Blues", "Greens", "Greys", 
+                                     "Oranges", "Purples", "Reds")[6]) 
+
+#2.RF
+rf = randomForest(actual_productivity ~., data = train_new, mtry=3, importance=TRUE)
+
+train_new$subSample = trainingSamples(train_new, Training=0.8, Testing=0.2)
+rf_1 = train(eq, d)
+
+#3. LM
+#lm()
+source("C:/Users/user/OneDrive/桌面/employee performance/src/trainingSamples.R")
+head(train_new)
+lm_r=lm(actual_productivity ~ ., data=train_new[,-length(train_new[1,])],)
+
+summary(lm_r)
+dev.new();plot(lm_r,which=1)
+#Using K-Fold Cross Validation to train(robustly estimate) data
+ID = seq_len(length(train_new$actual_productivity))
+k = length(train_new[,1])/c(1,5,10,20,25)[5];k
+fold = sample(rep(1:k, length.out = length(train_new$actual_productivity)))
+cvErrors=NULL
+for (i in 1:k) { #i=1
+  cvset <- ID[fold == i]
+  trainset <- ID[fold != i]
+  trainmodel <- lm(actual_productivity ~ ., data=train_new[trainset,])
+  cv.fit= predict(trainmodel,newdata=train_new[cvset,])
+  cv.errors=train_new[cvset,20]-cv.fit
+  
+  cvErrors=c(cvErrors,cv.errors)
+}
+RMSE=sqrt(mean(cvErrors^2)) #Root mean square errors
+MAE=mean(abs(cvErrors)) #Mean absolute errors
+
+#deal with 1 factor
+#train_new = train_new[,c(-1)]
+train_new$subSample = trainingSamples(train_new, Training=0.8, Testing=0.2)
+lm_1=train(eq,
+             data=train_new[,-length(train_new[1,])], 
+             subset=train_new$subSample=="Training",
+             method="lm",
+             trControl = trainControl(method = c("cv","boot")[2],
+                                      number=10,
+                                      savePredictions =TRUE))
+dataTesting=subset(train_new,subSample=="Testing")
+pred.lm =predict(lm_1,newdata=dataTesting[,-length(train_new[1,])])
+sqrt(sum((dataTesting$actual_productivity-pred.lm)^2))#預測標準差
+
+#3. 
